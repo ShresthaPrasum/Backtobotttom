@@ -29,7 +29,7 @@ public class HorizontalParallax : MonoBehaviour
 
         cameraStartPosition = mainCamera.transform.position;
 
-        // Cache sprite widths and starting positions
+
         for (int i = 0; i < layers.Length; i++)
         {
             if (layers[i].layerTransform != null)
@@ -48,7 +48,7 @@ public class HorizontalParallax : MonoBehaviour
     {
         float cameraTravelX = mainCamera.transform.position.x - cameraStartPosition.x;
 
-        // Apply parallax to each layer
+    
         for (int i = 0; i < layers.Length; i++)
         {
             if (layers[i].layerTransform != null && layers[i].spriteWidth > 0)
