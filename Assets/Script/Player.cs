@@ -1,182 +1,156 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-[RequireComponent(typeof(Rigidbody2D), typeof(Collider2D))]
-public class Player : MonoBehaviour
+public class SlingshotPlayer : MonoBehaviour
 {
-    [Header("Slingshot Setup")]
-    [SerializeField] private float launchPower = 12f;
-    [SerializeField] private float maxDrag = 3f;
-    [SerializeField] private float minDrag = 0.15f;
+    [Header("Slingshot Settings")]
+    public float launchPower = 15f;
+    public float maxDragDistance = 3f;
+    public float minDragDistance = 0.5f;
+    public float grabRadius = 1.5f; // How close to the center you need to click
 
-    [Header("Soft Body Tuning")]
-    [SerializeField] private float normalStiffness = 8f;
-    [SerializeField] private float dragStiffness = 2f;
-    [SerializeField] private float springDamping = 1f;
+    [Header("Ground & Cooldown")]
+    public float groundCheckRadius = 0.3f; // How far from the bones to check for ground
+    public float launchCooldown = 1f; // Seconds to wait before you can launch again
 
-    [Header("Visual Squash")]
-    [SerializeField] private Transform visualRoot;
-    [SerializeField] private float maxSquashX = 1.3f;
-    [SerializeField] private float minSquashY = 0.6f;
-    [SerializeField] private float squashSpeed = 15f;
+    [Header("Line Indicator")]
+    public Color lineColor = Color.white;
+    public float lineWidth = 0.1f;
 
-    private Rigidbody2D mainRb;
-    private Collider2D mainCol;
-    private SpringJoint2D[] nodeSprings;
+    private Rigidbody2D[] boneRigidbodies;
     private Camera cam;
-    
-    private Vector3 baseScale;
+    private LineRenderer aimLine;
+
     private bool isDragging;
-    private Vector2 dragStartMouseWorld; 
-    private Vector2 playerStartWorld; 
-    private Vector2 currentPull;
+    private Vector2 dragStartMousePos;
+    private Vector2 currentDragVector;
+    private Vector2[] boneStartPositions;
+    private float nextLaunchTime;
 
     private void Awake()
     {
-        mainRb = GetComponent<Rigidbody2D>();
-        mainCol = GetComponent<Collider2D>();
+        // Automatically find all 8 of your bone rigidbodies inside this object!
+        boneRigidbodies = GetComponentsInChildren<Rigidbody2D>();
+        boneStartPositions = new Vector2[boneRigidbodies.Length];
+        
         cam = Camera.main;
 
-        
-        nodeSprings = GetComponentsInChildren<SpringJoint2D>(true);
-        Collider2D[] allCols = GetComponentsInChildren<Collider2D>(true);
-
-        
-        for (int i = 0; i < allCols.Length; i++)
-        {
-            for (int j = i + 1; j < allCols.Length; j++)
-            {
-                Physics2D.IgnoreCollision(allCols[i], allCols[j]);
-            }
-        }
-
-        
-        foreach (var spring in nodeSprings)
-        {
-            if (spring.connectedBody != null)
-            {
-                spring.autoConfigureDistance = false;
-                spring.distance = Vector2.Distance(spring.transform.position, spring.connectedBody.transform.position);
-                spring.dampingRatio = springDamping;
-                spring.frequency = normalStiffness;
-            }
-        }
-
-        
-        if (visualRoot != null)
-        {
-            baseScale = visualRoot.localScale;
-        }
+        // Create the shooting line via script automatically
+        aimLine = gameObject.AddComponent<LineRenderer>();
+        aimLine.positionCount = 2;
+        aimLine.startWidth = lineWidth;
+        aimLine.endWidth = lineWidth;
+        aimLine.startColor = lineColor;
+        aimLine.endColor = lineColor;
+        aimLine.material = new Material(Shader.Find("Sprites/Default")); // Gives it a solid unlit color
+        aimLine.sortingOrder = 10;
+        aimLine.enabled = false;
     }
 
     private void Update()
     {
         if (cam == null) cam = Camera.main;
-        if (Mouse.current == null) return;
+        if (Mouse.current == null || boneRigidbodies.Length == 0) return;
 
-        
-        if (Mouse.current.leftButton.wasPressedThisFrame)
+        HandleInput();
+    }
+
+    private void HandleInput()
+    {
+        // 1. Start Drag
+        if (Mouse.current.leftButton.wasPressedThisFrame && Time.time >= nextLaunchTime)
         {
+            // Don't allow dragging if we are not touching the ground/colliders!
+            if (!IsGrounded()) return;
+
             Vector2 mousePos = cam.ScreenToWorldPoint(Mouse.current.position.ReadValue());
             
-            if (mainCol.OverlapPoint(mousePos))
+            // Check if we clicked near the center of the bones
+            if (Vector2.Distance(mousePos, GetAverageCenter()) <= grabRadius)
             {
-                StartDrag();
+                isDragging = true;
+                dragStartMousePos = mousePos;
+                currentDragVector = Vector2.zero;
+
+                aimLine.enabled = true;
+
+                
+                for (int i = 0; i < boneRigidbodies.Length; i++)
+                {
+                    
+                    boneRigidbodies[i].constraints = RigidbodyConstraints2D.FreezeAll;
+                    boneRigidbodies[i].linearVelocity = Vector2.zero;
+                    boneStartPositions[i] = boneRigidbodies[i].position;
+                }
             }
         }
-        
+        // 2. Dragging
         else if (Mouse.current.leftButton.isPressed && isDragging)
         {
             Vector2 mousePos = cam.ScreenToWorldPoint(Mouse.current.position.ReadValue());
-            UpdateDrag(mousePos);
+            Vector2 rawDrag = mousePos - dragStartMousePos;
+            currentDragVector = Vector2.ClampMagnitude(rawDrag, maxDragDistance);
+
+            
+            Vector2 centerPos = GetAverageCenter();
+            aimLine.SetPosition(0, centerPos);
+            aimLine.SetPosition(1, centerPos - currentDragVector);
         }
-        
+        // 3. Release Drag (Launch)
         else if (Mouse.current.leftButton.wasReleasedThisFrame && isDragging)
         {
-            ReleaseDrag();
-        }
+            isDragging = false;
+            aimLine.enabled = false;
 
-        
-        if (visualRoot != null)
+            bool actuallyLaunched = false;
+
+            for (int i = 0; i < boneRigidbodies.Length; i++)
+            {
+                // Unfreeze the bones completely so they can fly, jiggle, and rotate naturally
+                boneRigidbodies[i].constraints = RigidbodyConstraints2D.None;
+
+                // If pulled far enough, shoot every individual bone!
+                if (currentDragVector.magnitude >= minDragDistance)
+                {
+                    boneRigidbodies[i].AddForce(-currentDragVector * launchPower, ForceMode2D.Impulse);
+                    actuallyLaunched = true;
+                }
+            }
+
+            if (actuallyLaunched)
+            {
+                nextLaunchTime = Time.time + launchCooldown; // Lock the slingshot for designated cooldown time
+            }
+
+            currentDragVector = Vector2.zero;
+        }
+    }
+
+    private Vector2 GetAverageCenter()
+    {
+        Vector2 center = Vector2.zero;
+        foreach (var rb in boneRigidbodies)
         {
-            UpdateVisualSquash();
+            center += rb.position;
         }
+        return center / boneRigidbodies.Length;
     }
 
-    private void FixedUpdate()
+    private bool IsGrounded()
     {
-        if (isDragging)
+        // Simple logic: Is any one of our bones physically touching ANY collider that isn't the player?
+        foreach (var rb in boneRigidbodies)
         {
-            
-            mainRb.MovePosition(playerStartWorld + currentPull);
+            Collider2D[] colliders = Physics2D.OverlapCircleAll(rb.position, groundCheckRadius);
+            foreach (Collider2D col in colliders)
+            {
+                // Ignore the ground check if the detected collider is one of our own bones
+                if (!col.transform.IsChildOf(this.transform))
+                {
+                    return true;
+                }
+            }
         }
-    }
-
-    private void StartDrag()
-    {
-        isDragging = true;
-        dragStartMouseWorld = cam.ScreenToWorldPoint(Mouse.current.position.ReadValue());
-        playerStartWorld = mainRb.position;
-        currentPull = Vector2.zero;
-
-        
-        mainRb.bodyType = RigidbodyType2D.Kinematic;
-        mainRb.linearVelocity = Vector2.zero;
-        mainRb.angularVelocity = 0f;
-
-        
-        SetSpringStiffness(dragStiffness);
-    }
-
-    private void UpdateDrag(Vector2 mousePos)
-    {
-        
-        Vector2 rawPull = mousePos - dragStartMouseWorld;
-        
-        
-        currentPull = Vector2.ClampMagnitude(rawPull, maxDrag);
-    }
-
-    private void ReleaseDrag()
-    {
-        isDragging = false;
-        
-        
-        mainRb.bodyType = RigidbodyType2D.Dynamic;
-        
-        
-        SetSpringStiffness(normalStiffness);
-
-        
-        if (currentPull.magnitude >= minDrag)
-        {
-            mainRb.AddForce(-currentPull * launchPower, ForceMode2D.Impulse);
-        }
-        else
-        {
-            
-            mainRb.position = playerStartWorld;
-        }
-
-        currentPull = Vector2.zero;
-    }
-
-    private void SetSpringStiffness(float stiffness)
-    {
-        for (int i = 0; i < nodeSprings.Length; i++)
-        {
-            nodeSprings[i].frequency = stiffness;
-        }
-    }
-
-    private void UpdateVisualSquash()
-    {
-        float percentPulled = currentPull.magnitude / maxDrag;
-
-        Vector3 targetScale = baseScale;
-        targetScale.x = baseScale.x * Mathf.Lerp(1f, maxSquashX, percentPulled);
-        targetScale.y = baseScale.y * Mathf.Lerp(1f, minSquashY, percentPulled);
-
-        visualRoot.localScale = Vector3.Lerp(visualRoot.localScale, targetScale, Time.deltaTime * squashSpeed);
+        return false;
     }
 }
