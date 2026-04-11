@@ -1,4 +1,4 @@
-<img width="1919" height="1007" alt="image" src="https://github.com/user-attachments/assets/8ddbdc0e-123a-40af-b974-46d4c00a5371" /># Back to Bottom
+# Back to Bottom
 
 A 2D platformer where you play as a squishy, bouncy soft body slime. It's a combination of angry bird(movement) and getting over it(Main Goal).
 
