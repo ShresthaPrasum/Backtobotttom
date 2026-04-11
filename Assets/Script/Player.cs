@@ -13,13 +13,15 @@ public class SlingshotPlayer : MonoBehaviour
     public float groundCheckRadius = 0.3f; // How far from the bones to check for ground
     public float launchCooldown = 1f; // Seconds to wait before you can launch again
 
-    [Header("Line Indicator")]
-    public Color lineColor = Color.white;
-    public float lineWidth = 0.1f;
+    [Header("Dot Indicator")]
+    public GameObject dotPrefab; // Assign a simple circle sprite object here
+    public int numberOfDots = 8;
+    public float startDotSize = 0.3f;
+    public float endDotSize = 0.05f;
 
     private Rigidbody2D[] boneRigidbodies;
     private Camera cam;
-    private LineRenderer aimLine;
+    private GameObject[] aimDots;
 
     private bool isDragging;
     private Vector2 dragStartMousePos;
@@ -35,16 +37,16 @@ public class SlingshotPlayer : MonoBehaviour
         
         cam = Camera.main;
 
-        // Create the shooting line via script automatically
-        aimLine = gameObject.AddComponent<LineRenderer>();
-        aimLine.positionCount = 2;
-        aimLine.startWidth = lineWidth;
-        aimLine.endWidth = lineWidth;
-        aimLine.startColor = lineColor;
-        aimLine.endColor = lineColor;
-        aimLine.material = new Material(Shader.Find("Sprites/Default")); // Gives it a solid unlit color
-        aimLine.sortingOrder = 10;
-        aimLine.enabled = false;
+        // Generate the pool of indicator dots
+        aimDots = new GameObject[numberOfDots];
+        for (int i = 0; i < numberOfDots; i++)
+        {
+            if (dotPrefab != null)
+            {
+                aimDots[i] = Instantiate(dotPrefab, Vector3.zero, Quaternion.identity);
+                aimDots[i].SetActive(false);
+            }
+        }
     }
 
     private void Update()
@@ -72,7 +74,10 @@ public class SlingshotPlayer : MonoBehaviour
                 dragStartMousePos = mousePos;
                 currentDragVector = Vector2.zero;
 
-                aimLine.enabled = true;
+                if (dotPrefab != null)
+                {
+                    foreach (var dot in aimDots) if (dot != null) dot.SetActive(true);
+                }
 
                 
                 for (int i = 0; i < boneRigidbodies.Length; i++)
@@ -91,16 +96,35 @@ public class SlingshotPlayer : MonoBehaviour
             Vector2 rawDrag = mousePos - dragStartMousePos;
             currentDragVector = Vector2.ClampMagnitude(rawDrag, maxDragDistance);
 
-            
-            Vector2 centerPos = GetAverageCenter();
-            aimLine.SetPosition(0, centerPos);
-            aimLine.SetPosition(1, centerPos - currentDragVector);
+            // Position and scale the dots to show the trajectory
+            if (dotPrefab != null && currentDragVector.magnitude > 0)
+            {
+                Vector2 centerPos = GetAverageCenter();
+                Vector2 launchDirection = -currentDragVector;
+
+                for (int i = 0; i < numberOfDots; i++)
+                {
+                    if (aimDots[i] == null) continue;
+
+                    // Space them evenly
+                    float t = i / (float)Mathf.Max(1, numberOfDots - 1);
+                    aimDots[i].transform.position = centerPos + (launchDirection * t);
+
+                    // Scale from large (start) to small (end)
+                    float size = Mathf.Lerp(startDotSize, endDotSize, t);
+                    aimDots[i].transform.localScale = new Vector3(size, size, 1f);
+                }
+            }
         }
         // 3. Release Drag (Launch)
         else if (Mouse.current.leftButton.wasReleasedThisFrame && isDragging)
         {
             isDragging = false;
-            aimLine.enabled = false;
+
+            if (dotPrefab != null)
+            {
+                foreach (var dot in aimDots) if (dot != null) dot.SetActive(false);
+            }
 
             bool actuallyLaunched = false;
 
