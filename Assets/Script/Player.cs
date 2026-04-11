@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement;
 
 public class SlingshotPlayer : MonoBehaviour
 {
@@ -32,12 +33,16 @@ public class SlingshotPlayer : MonoBehaviour
 
     private void Awake()
     {
-
         boneRigidbodies = GetComponentsInChildren<Rigidbody2D>();
         boneStartPositions = new Vector2[boneRigidbodies.Length];
 
-        cam = Camera.main;
+        foreach (Rigidbody2D rb in boneRigidbodies)
+        {
+            
+            rb.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
+        }
 
+        cam = Camera.main;
 
         aimDots = new GameObject[numberOfDots];
         for (int i = 0; i < numberOfDots; i++)
@@ -77,6 +82,17 @@ public class SlingshotPlayer : MonoBehaviour
 
     private void Update()
     {
+        
+
+
+        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+        {
+            SavePlayerProgress();
+            SceneManager.LoadScene("Menu"); 
+        
+            return;
+        }
+
         if (cam == null) cam = Camera.main;
         if (Mouse.current == null || boneRigidbodies.Length == 0) return;
 
